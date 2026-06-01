@@ -15,6 +15,8 @@ struct APIKeyManagementView: View {
     @State private var localCLICommandTemplate: String = ""
     @State private var localCLITimeoutSeconds: Double = LocalCLIService.defaultTimeoutSeconds
     @State private var isSyncingLocalCLIState = false
+    @State private var vertexProject: String = VertexAIService.shared.project
+    @State private var vertexLocation: String = VertexAIService.shared.location
     
     var body: some View {
         Section("AI Provider Integration") {
@@ -63,6 +65,9 @@ struct APIKeyManagementView: View {
                 }
                 if aiService.selectedProvider == .localCLI {
                     syncLocalCLIStateFromService()
+                }
+                if aiService.selectedProvider == .vertexAI {
+                    prefillVertexProjectIfNeeded()
                 }
             }
 
@@ -257,7 +262,40 @@ struct APIKeyManagementView: View {
                         }
                         .disabled(aiService.customBaseURL.isEmpty || aiService.customModel.isEmpty || apiKey.isEmpty)
                     }
-                    
+
+                } else if aiService.selectedProvider == .vertexAI {
+                    TextField("Project ID", text: $vertexProject, prompt: Text("e.g. my-gcp-project"))
+                        .textFieldStyle(.roundedBorder)
+                        .onChange(of: vertexProject) { _, newValue in
+                            aiService.updateVertexProject(newValue)
+                        }
+
+                    Picker("Region", selection: $vertexLocation) {
+                        Text("global").tag("global")
+                        Text("us-central1").tag("us-central1")
+                        Text("us-east5").tag("us-east5")
+                        Text("europe-west1").tag("europe-west1")
+                        Text("asia-southeast1").tag("asia-southeast1")
+                    }
+                    .onChange(of: vertexLocation) { _, newValue in
+                        aiService.updateVertexLocation(newValue)
+                    }
+
+                    HStack {
+                        Button(action: { verifyVertex() }) {
+                            HStack {
+                                if isVerifying { ProgressView().controlSize(.small) }
+                                Text("Verify")
+                            }
+                        }
+                        .disabled(vertexProject.isEmpty || isVerifying)
+                        Spacer()
+                    }
+
+                    Text("Uses your gcloud login (no API key). If verification fails, run `gcloud auth login` in Terminal.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+
                 } else {
                     if aiService.isAPIKeyValid {
                         HStack {
@@ -327,6 +365,40 @@ struct APIKeyManagementView: View {
             }
             if aiService.selectedProvider == .localCLI {
                 syncLocalCLIStateFromService()
+            }
+            if aiService.selectedProvider == .vertexAI {
+                prefillVertexProjectIfNeeded()
+            }
+        }
+    }
+
+    private func prefillVertexProjectIfNeeded() {
+        vertexProject = VertexAIService.shared.project
+        vertexLocation = VertexAIService.shared.location
+        guard vertexProject.isEmpty else { return }
+        Task {
+            if let project = await VertexAIService.shared.defaultProjectFromGcloud() {
+                await MainActor.run {
+                    if vertexProject.isEmpty {
+                        vertexProject = project
+                        aiService.updateVertexProject(project)
+                    }
+                }
+            }
+        }
+    }
+
+    private func verifyVertex() {
+        isVerifying = true
+        Task {
+            let result = await VertexAIService.shared.verify(model: aiService.currentModel)
+            await MainActor.run {
+                isVerifying = false
+                aiService.setVertexConnected(result.isValid)
+                if !result.isValid {
+                    alertMessage = result.errorMessage ?? "Verification failed"
+                    showAlert = true
+                }
             }
         }
     }

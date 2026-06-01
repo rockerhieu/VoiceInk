@@ -279,9 +279,16 @@ class AIEnhancementService: ObservableObject {
                     for: aiService.selectedProvider,
                     modelName: aiService.currentModel
                 )
+                // Vertex AI authenticates with a gcloud OAuth token instead of an API key.
+                let effectiveAPIKey: String
+                if aiService.selectedProvider == .vertexAI {
+                    effectiveAPIKey = try await VertexAIService.shared.accessToken()
+                } else {
+                    effectiveAPIKey = aiService.apiKey
+                }
                 result = try await OpenAILLMClient.chatCompletion(
                     baseURL: baseURL,
-                    apiKey: aiService.apiKey,
+                    apiKey: effectiveAPIKey,
                     model: aiService.currentModel,
                     messages: [.user(formattedText)],
                     systemPrompt: systemMessage,

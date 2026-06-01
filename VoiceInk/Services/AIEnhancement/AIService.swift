@@ -5,6 +5,7 @@ enum AIProvider: String, CaseIterable {
     case cerebras = "Cerebras"
     case groq = "Groq"
     case gemini = "Gemini"
+    case vertexAI = "Vertex AI"
     case anthropic = "Anthropic"
     case openAI = "OpenAI"
     case openRouter = "OpenRouter"
@@ -27,6 +28,8 @@ enum AIProvider: String, CaseIterable {
             return "https://api.groq.com/openai/v1/chat/completions"
         case .gemini:
             return "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+        case .vertexAI:
+            return VertexAIService.shared.baseURL
         case .anthropic:
             return "https://api.anthropic.com/v1/messages"
         case .openAI:
@@ -62,6 +65,8 @@ enum AIProvider: String, CaseIterable {
             return "openai/gpt-oss-120b"
         case .gemini:
             return "gemini-2.5-flash-lite"
+        case .vertexAI:
+            return "google/gemini-2.5-flash"
         case .anthropic:
             return "claude-sonnet-4-6"
         case .openAI:
@@ -114,6 +119,16 @@ enum AIProvider: String, CaseIterable {
                 "gemini-2.5-flash",
                 "gemini-2.5-flash-lite"
             ]
+        case .vertexAI:
+            return [
+                "google/gemini-3.5-flash",
+                "google/gemini-3.1-pro-preview",
+                "google/gemini-3-flash-preview",
+                "google/gemini-3.1-flash-lite",
+                "google/gemini-2.5-pro",
+                "google/gemini-2.5-flash",
+                "google/gemini-2.5-flash-lite"
+            ]
         case .anthropic:
             return [
                 "claude-opus-4-7",
@@ -163,7 +178,7 @@ enum AIProvider: String, CaseIterable {
     
     var requiresAPIKey: Bool {
         switch self {
-        case .ollama, .localCLI:
+        case .ollama, .localCLI, .vertexAI:
             return false
         default:
             return true
@@ -197,7 +212,11 @@ class AIService: ObservableObject {
                 }
             } else {
                 self.apiKey = ""
-                self.isAPIKeyValid = selectedProvider == .localCLI ? localCLIService.isConfigured : true
+                switch selectedProvider {
+                case .localCLI: self.isAPIKeyValid = localCLIService.isConfigured
+                case .vertexAI: self.isAPIKeyValid = VertexAIService.shared.isConfigured
+                default: self.isAPIKeyValid = true
+                }
                 if selectedProvider == .ollama {
                     Task {
                         await ollamaService.checkConnection()
@@ -222,6 +241,8 @@ class AIService: ObservableObject {
                 return ollamaService.isConnected
             } else if provider == .localCLI {
                 return localCLIService.isConfigured
+            } else if provider == .vertexAI {
+                return VertexAIService.shared.isConfigured
             } else if provider.requiresAPIKey {
                 return APIKeyManager.shared.hasAPIKey(forProvider: provider.rawValue)
             }
@@ -281,7 +302,11 @@ class AIService: ObservableObject {
                 self.isAPIKeyValid = true
             }
         } else {
-            self.isAPIKeyValid = selectedProvider == .localCLI ? localCLIService.isConfigured : true
+            switch selectedProvider {
+            case .localCLI: self.isAPIKeyValid = localCLIService.isConfigured
+            case .vertexAI: self.isAPIKeyValid = VertexAIService.shared.isConfigured
+            default: self.isAPIKeyValid = true
+            }
         }
 
         loadSavedModelSelections()
@@ -426,6 +451,27 @@ class AIService: ObservableObject {
     func updateSelectedOllamaModel(_ modelName: String) {
         ollamaService.selectedModel = modelName
         userDefaults.set(modelName, forKey: "ollamaSelectedModel")
+    }
+
+    func updateVertexProject(_ project: String) {
+        VertexAIService.shared.project = project
+        if selectedProvider == .vertexAI {
+            isAPIKeyValid = VertexAIService.shared.isConfigured
+        }
+        objectWillChange.send()
+        NotificationCenter.default.post(name: .AppSettingsDidChange, object: nil)
+    }
+
+    func updateVertexLocation(_ location: String) {
+        VertexAIService.shared.location = location
+        objectWillChange.send()
+        NotificationCenter.default.post(name: .AppSettingsDidChange, object: nil)
+    }
+
+    func setVertexConnected(_ connected: Bool) {
+        guard selectedProvider == .vertexAI else { return }
+        isAPIKeyValid = connected
+        objectWillChange.send()
     }
 
     func loadLocalCLITemplate(_ template: LocalCLITemplate) {
