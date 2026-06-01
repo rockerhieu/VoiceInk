@@ -2,7 +2,8 @@
 #
 # update-and-install.sh - VoiceInk one-shot updater
 #
-# 1. Pulls the latest commits from upstream (origin/main).
+# 1. Merges the latest from upstream Beingpax/VoiceInk into the current branch
+#    (auto-adds an 'upstream' remote if missing; keeps local commits like Vertex).
 # 2. Builds the local app via 'make local' - ad-hoc signed, and LOCAL_BUILD
 #    disables CloudKit so it runs without an Apple Developer cert.
 #    (Plain 'make build'/'make all' produce an unsigned, CloudKit-enabled app
@@ -11,8 +12,9 @@
 # 3. Installs the fresh build to /Applications and relaunches it.
 #
 # Safe to re-run any time. Local tracked changes are auto-stashed across the
-# pull and re-applied after, so it never clobbers local work. Aborts (preserving
-# your stash) if the pull can't fast-forward or the stash can't re-apply.
+# merge and re-applied after, so it never clobbers local work. On merge or
+# stash-pop conflicts it stops with instructions (your work is preserved).
+# Does NOT push; push the merged result to your fork (origin) yourself.
 #
 set -euo pipefail
 
@@ -24,38 +26,52 @@ DEST="/Applications/$APP_NAME"
 cd "$REPO_DIR"
 echo "==> Repo: $REPO_DIR"
 
-# 1) Update to upstream -------------------------------------------------------
-# Auto-stash local tracked changes so a fast-forward pull can apply, then pop
-# them back on top. Untracked files (this script, new sources, build artifacts)
-# are left in place and don't need stashing.
+# 1) Sync with upstream (Beingpax) -------------------------------------------
+# Ensure an 'upstream' remote pointing at Beingpax exists, then merge its main
+# into the current branch (keeping local commits). Local tracked changes are
+# auto-stashed across the merge and re-applied after; untracked files (this
+# script, new sources, build artifacts) are left in place.
+UPSTREAM_REMOTE="upstream"
+UPSTREAM_URL="https://github.com/Beingpax/VoiceInk.git"
+UPSTREAM_BRANCH="main"
+
+if ! git remote get-url "$UPSTREAM_REMOTE" >/dev/null 2>&1; then
+  echo "==> Adding '$UPSTREAM_REMOTE' remote -> $UPSTREAM_URL"
+  git remote add "$UPSTREAM_REMOTE" "$UPSTREAM_URL"
+fi
+
 STASHED=0
 if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
-  echo "==> Stashing local changes before update..."
+  echo "==> Stashing local changes before sync..."
   git stash push --message "update-and-install auto-stash" >/dev/null
   STASHED=1
 fi
 
-BRANCH="$(git rev-parse --abbrev-ref HEAD)"
-echo "==> Updating '$BRANCH' from upstream..."
-git fetch origin
-if ! git merge --ff-only '@{u}'; then
-  echo "ERROR: cannot fast-forward (branch has diverged from upstream)." >&2
-  echo "       Resolve manually with: git rebase @{u}" >&2
+restore_stash() {
   if [ "$STASHED" -eq 1 ]; then
-    echo "       Restoring your stashed changes..." >&2
-    git stash pop || echo "       WARNING: could not pop stash; see 'git stash list'." >&2
+    echo "==> Re-applying stashed changes..."
+    if ! git stash pop; then
+      echo "ERROR: stash pop hit conflicts. Resolve them, then re-run." >&2
+      echo "       Your changes are safe in 'git stash list'." >&2
+      exit 1
+    fi
   fi
+}
+
+BRANCH="$(git rev-parse --abbrev-ref HEAD)"
+echo "==> Syncing '$BRANCH' with $UPSTREAM_REMOTE/$UPSTREAM_BRANCH..."
+git fetch "$UPSTREAM_REMOTE"
+if ! git merge --no-edit "$UPSTREAM_REMOTE/$UPSTREAM_BRANCH"; then
+  echo "ERROR: merging $UPSTREAM_REMOTE/$UPSTREAM_BRANCH hit conflicts." >&2
+  git merge --abort 2>/dev/null || true
+  echo "       Aborted the merge to keep your tree clean. Resolve manually:" >&2
+  echo "         git fetch $UPSTREAM_REMOTE && git merge $UPSTREAM_REMOTE/$UPSTREAM_BRANCH" >&2
+  echo "       fix conflicts, commit, then re-run this script." >&2
+  restore_stash
   exit 1
 fi
 
-if [ "$STASHED" -eq 1 ]; then
-  echo "==> Re-applying stashed changes..."
-  if ! git stash pop; then
-    echo "ERROR: stash pop hit conflicts (upstream changed the same lines)." >&2
-    echo "       Resolve the conflicts, then re-run. Your changes are safe in 'git stash list'." >&2
-    exit 1
-  fi
-fi
+restore_stash
 
 # 2) Build (local target) -----------------------------------------------------
 echo "==> Building (make local)..."
