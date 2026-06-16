@@ -15,6 +15,7 @@ final class CoreAudioRecorder: @unchecked Sendable {
     private var audioFile: ExtAudioFileRef?
 
     private var isRecording = false
+    private var isAudioUnitInitialized = false
     private var currentDeviceID: AudioDeviceID = 0
     private var recordingURL: URL?
 
@@ -49,105 +50,121 @@ final class CoreAudioRecorder: @unchecked Sendable {
     private var renderBufferSize: UInt32 = 0
 
     /// Called on the audio thread with raw PCM data (16-bit, 16kHz, mono) for streaming.
-    var onAudioChunk: ((_ data: Data) -> Void)?
+    private let audioChunkLock = NSLock()
+    private var _onAudioChunk: ((_ data: Data) -> Void)?
+    var onAudioChunk: ((_ data: Data) -> Void)? {
+        get {
+            audioChunkLock.lock()
+            defer { audioChunkLock.unlock() }
+            return _onAudioChunk
+        }
+        set {
+            audioChunkLock.lock()
+            _onAudioChunk = newValue
+            audioChunkLock.unlock()
+        }
+    }
 
     // MARK: - Initialization
 
     init() {}
 
     deinit {
-        stopRecording()
+        teardown()
     }
 
     // MARK: - Public Interface
+
+    /// Prepares AUHAL for the selected device without starting capture.
+    func prepare(deviceID: AudioDeviceID) throws {
+        if isRecording {
+            return
+        }
+
+        try validateDevice(deviceID)
+
+        if isPrepared(for: deviceID) {
+            return
+        }
+
+        teardownPreparedAudioUnit()
+        currentDeviceID = deviceID
+
+        logDeviceDetails(deviceID: deviceID)
+
+        do {
+            try createAudioUnit()
+
+            try setInputDevice(deviceID)
+
+            try configureFormats()
+
+            try setupInputCallback()
+
+            try initializeAudioUnit()
+        } catch {
+            teardownPreparedAudioUnit()
+            throw error
+        }
+    }
 
     /// Starts recording from the specified device to the given URL (WAV format)
     func startRecording(toOutputFile url: URL, deviceID: AudioDeviceID) throws {
         // Stop any existing recording
         stopRecording()
 
-        if deviceID == 0 {
-            logger.error("Cannot start recording - no valid audio device (deviceID is 0)")
-            throw CoreAudioRecorderError.failedToSetDevice(status: 0)
+        try prepare(deviceID: deviceID)
+
+        do {
+            recordingURL = url
+
+            // The output file is per recording; the AUHAL setup above is reused.
+            try createOutputFile(at: url)
+
+            try startAudioUnit()
+        } catch {
+            isRecording = false
+            closeOutputFile()
+            recordingURL = nil
+            teardownPreparedAudioUnit()
+            throw error
         }
-
-        // Validate device still exists before proceeding with setup
-        guard isDeviceAvailable(deviceID) else {
-            logger.error("Cannot start recording - device \(deviceID, privacy: .public) is no longer available")
-            throw CoreAudioRecorderError.deviceNotAvailable
-        }
-
-        currentDeviceID = deviceID
-        recordingURL = url
-
-        logger.notice("🎙️ Starting recording from device \(deviceID, privacy: .public)")
-        logDeviceDetails(deviceID: deviceID)
-
-        // Step 1: Create and configure the AudioUnit (AUHAL)
-        try createAudioUnit()
-
-        // Step 2: Set the input device (does NOT change system default)
-        try setInputDevice(deviceID)
-
-        // Step 3: Configure formats
-        try configureFormats()
-
-        // Step 4: Set up the input callback
-        try setupInputCallback()
-
-        // Step 5: Create the output file
-        try createOutputFile(at: url)
-
-        // Step 6: Initialize and start the AudioUnit
-        try startAudioUnit()
-
-        isRecording = true
     }
 
     /// Stops the current recording
     func stopRecording() {
-        guard isRecording || audioUnit != nil else {
-            logger.notice("stopRecording: skipped, not recording and no audio unit")
+        guard isRecording || audioFile != nil else {
             return
         }
-        logger.notice("stopRecording: stopping core audio recorder")
 
-        // Stop and dispose AudioUnit
-        if let unit = audioUnit {
-            AudioOutputUnitStop(unit)
-            AudioComponentInstanceDispose(unit)
-            audioUnit = nil
-        }
-
-        // Close audio file
-        if let file = audioFile {
-            ExtAudioFileDispose(file)
-            audioFile = nil
-        }
-
-        // Free conversion buffer
-        if let buffer = conversionBuffer {
-            buffer.deallocate()
-            conversionBuffer = nil
-            conversionBufferSize = 0
-        }
-
-        // Free render buffer
-        if let buffer = renderBuffer {
-            buffer.deallocate()
-            renderBuffer = nil
-            renderBufferSize = 0
-        }
-
+        let wasRecording = isRecording
         isRecording = false
-        currentDeviceID = 0
+
+        if wasRecording, let unit = audioUnit {
+            let stopStatus = AudioOutputUnitStop(unit)
+            if stopStatus != noErr {
+                logger.warning("🎙️ AudioOutputUnitStop returned \(stopStatus, privacy: .public)")
+            }
+
+            let resetStatus = AudioUnitReset(unit, kAudioUnitScope_Global, 0)
+            if resetStatus != noErr {
+                logger.warning("🎙️ AudioUnitReset returned \(resetStatus, privacy: .public)")
+            }
+        }
+
+        closeOutputFile()
         recordingURL = nil
 
-        // Reset meters
-        meterLock.lock()
-        _averagePower = -160.0
-        _peakPower = -160.0
-        meterLock.unlock()
+        resetMeters()
+    }
+
+    /// Releases the prepared AUHAL and buffers. Use for app shutdown or hard recovery.
+    func teardown() {
+        stopRecording()
+        teardownPreparedAudioUnit()
+        recordingURL = nil
+        currentDeviceID = 0
+        resetMeters()
     }
 
     var isCurrentlyRecording: Bool { isRecording }
@@ -177,6 +194,7 @@ final class CoreAudioRecorder: @unchecked Sendable {
         if status != noErr {
             logger.warning("🎙️ Warning: AudioUnitUninitialize returned \(status, privacy: .public)")
         }
+        isAudioUnitInitialized = false
 
         // Step 3: Set the new device
         var device = newDeviceID
@@ -194,8 +212,11 @@ final class CoreAudioRecorder: @unchecked Sendable {
             logger.error("Failed to set new device: \(status, privacy: .public). Attempting recovery...")
             var recoveryDevice = oldDeviceID
             AudioUnitSetProperty(unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, &recoveryDevice, UInt32(MemoryLayout<AudioDeviceID>.size))
-            AudioUnitInitialize(unit)
-            AudioOutputUnitStart(unit)
+            let initializeStatus = AudioUnitInitialize(unit)
+            isAudioUnitInitialized = initializeStatus == noErr
+            if initializeStatus == noErr {
+                AudioOutputUnitStart(unit)
+            }
             throw CoreAudioRecorderError.failedToSetDevice(status: status)
         }
 
@@ -267,6 +288,7 @@ final class CoreAudioRecorder: @unchecked Sendable {
         if status != noErr {
             throw CoreAudioRecorderError.failedToInitialize(status: status)
         }
+        isAudioUnitInitialized = true
 
         status = AudioOutputUnitStart(unit)
         if status != noErr {
@@ -429,6 +451,8 @@ final class CoreAudioRecorder: @unchecked Sendable {
             logger.notice("🎙️ Converting: \(Int(devSampleRate), privacy: .public)Hz → \(Int(outSampleRate), privacy: .public)Hz")
         }
 
+        freeBuffers()
+
         // Pre-allocate buffers for real-time callback (avoid malloc in callback)
         let maxFrames: UInt32 = 4096
         let bufferSamples = maxFrames * deviceFormat.mChannelsPerFrame
@@ -504,22 +528,90 @@ final class CoreAudioRecorder: @unchecked Sendable {
         }
     }
 
-    private func startAudioUnit() throws {
+    private func initializeAudioUnit() throws {
         guard let audioUnit = audioUnit else {
             throw CoreAudioRecorderError.audioUnitNotInitialized
         }
 
-        var status = AudioUnitInitialize(audioUnit)
+        guard !isAudioUnitInitialized else { return }
+
+        let status = AudioUnitInitialize(audioUnit)
         if status != noErr {
             logger.error("Failed to initialize AudioUnit: \(status, privacy: .public)")
             throw CoreAudioRecorderError.failedToInitialize(status: status)
         }
+        isAudioUnitInitialized = true
+    }
 
-        status = AudioOutputUnitStart(audioUnit)
+    private func startAudioUnit() throws {
+        guard let audioUnit = audioUnit, isAudioUnitInitialized else {
+            throw CoreAudioRecorderError.audioUnitNotInitialized
+        }
+
+        isRecording = true
+        let status = AudioOutputUnitStart(audioUnit)
         if status != noErr {
+            isRecording = false
             logger.error("Failed to start AudioUnit: \(status, privacy: .public)")
             throw CoreAudioRecorderError.failedToStart(status: status)
         }
+    }
+
+    private func isPrepared(for deviceID: AudioDeviceID) -> Bool {
+        audioUnit != nil && isAudioUnitInitialized && currentDeviceID == deviceID && isDeviceAvailable(deviceID)
+    }
+
+    private func validateDevice(_ deviceID: AudioDeviceID) throws {
+        if deviceID == 0 {
+            logger.error("Cannot start recording - no valid audio device (deviceID is 0)")
+            throw CoreAudioRecorderError.failedToSetDevice(status: 0)
+        }
+
+        guard isDeviceAvailable(deviceID) else {
+            logger.error("Cannot start recording - device \(deviceID, privacy: .public) is no longer available")
+            throw CoreAudioRecorderError.deviceNotAvailable
+        }
+    }
+
+    private func closeOutputFile() {
+        if let file = audioFile {
+            ExtAudioFileDispose(file)
+            audioFile = nil
+        }
+    }
+
+    private func teardownPreparedAudioUnit() {
+        if let unit = audioUnit {
+            AudioOutputUnitStop(unit)
+            if isAudioUnitInitialized {
+                AudioUnitUninitialize(unit)
+            }
+            AudioComponentInstanceDispose(unit)
+            audioUnit = nil
+        }
+        isAudioUnitInitialized = false
+        freeBuffers()
+    }
+
+    private func freeBuffers() {
+        if let buffer = conversionBuffer {
+            buffer.deallocate()
+            conversionBuffer = nil
+            conversionBufferSize = 0
+        }
+
+        if let buffer = renderBuffer {
+            buffer.deallocate()
+            renderBuffer = nil
+            renderBufferSize = 0
+        }
+    }
+
+    private func resetMeters() {
+        meterLock.lock()
+        _averagePower = -160.0
+        _peakPower = -160.0
+        meterLock.unlock()
     }
 
     // MARK: - Input Callback
@@ -704,11 +796,11 @@ final class CoreAudioRecorder: @unchecked Sendable {
             logger.error("🎙️ ExtAudioFileWrite failed with status: \(writeStatus, privacy: .public)")
         }
 
-        // Send the same PCM data to the streaming callback if set
-        if let onAudioChunk = onAudioChunk {
+        // Send the same PCM data to the streaming callback if set.
+        if let audioChunk = onAudioChunk {
             let byteCount = Int(outputFrameCount) * MemoryLayout<Int16>.size
             let data = Data(bytes: outputBuffer, count: byteCount)
-            onAudioChunk(data)
+            audioChunk(data)
         }
     }
 
@@ -882,33 +974,33 @@ enum CoreAudioRecorderError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .audioUnitNotFound:
-            return "HAL Output AudioUnit not found"
+            return String(localized: "HAL Output AudioUnit not found")
         case .audioUnitNotInitialized:
-            return "AudioUnit not initialized"
+            return String(localized: "AudioUnit not initialized")
         case .deviceNotAvailable:
-            return "Audio device is no longer available"
+            return String(localized: "Audio device is no longer available")
         case .failedToCreateAudioUnit(let status):
-            return "Failed to create AudioUnit: \(status)"
+            return String(format: String(localized: "Failed to create AudioUnit: %lld"), Int64(status))
         case .failedToEnableInput(let status):
-            return "Failed to enable input: \(status)"
+            return String(format: String(localized: "Failed to enable input: %lld"), Int64(status))
         case .failedToDisableOutput(let status):
-            return "Failed to disable output: \(status)"
+            return String(format: String(localized: "Failed to disable output: %lld"), Int64(status))
         case .failedToSetDevice(let status):
-            return "Failed to set input device: \(status)"
+            return String(format: String(localized: "Failed to set input device: %lld"), Int64(status))
         case .failedToGetDeviceFormat(let status):
-            return "Failed to get device format: \(status)"
+            return String(format: String(localized: "Failed to get device format: %lld"), Int64(status))
         case .failedToSetFormat(let status):
-            return "Failed to set audio format: \(status)"
+            return String(format: String(localized: "Failed to set audio format: %lld"), Int64(status))
         case .failedToSetCallback(let status):
-            return "Failed to set input callback: \(status)"
+            return String(format: String(localized: "Failed to set input callback: %lld"), Int64(status))
         case .failedToCreateFile(let status):
-            return "Failed to create audio file: \(status)"
+            return String(format: String(localized: "Failed to create audio file: %lld"), Int64(status))
         case .failedToSetFileFormat(let status):
-            return "Failed to set file format: \(status)"
+            return String(format: String(localized: "Failed to set file format: %lld"), Int64(status))
         case .failedToInitialize(let status):
-            return "Failed to initialize AudioUnit: \(status)"
+            return String(format: String(localized: "Failed to initialize AudioUnit: %lld"), Int64(status))
         case .failedToStart(let status):
-            return "Failed to start AudioUnit: \(status)"
+            return String(format: String(localized: "Failed to start AudioUnit: %lld"), Int64(status))
         }
     }
 }

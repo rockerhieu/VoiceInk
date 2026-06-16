@@ -16,29 +16,27 @@ enum TranscriptionLanguageSupport {
         "tk", "ur", "uz", "cy", "yi", "yo"
     ]
 
-    static func languages(for model: any TranscriptionModel) -> [String: String] {
+    static func languages(for model: any TranscriptionModel, realtimeEnabled: Bool? = nil) -> [String: String] {
         if model.provider == .assemblyAI {
-            return assemblyAILanguages(usesRealtime: assemblyAIUsesRealtime(for: model))
+            return assemblyAILanguages(usesRealtime: assemblyAIUsesRealtime(for: model, realtimeEnabled: realtimeEnabled))
         }
 
         return model.supportedLanguages
     }
 
-    static func validLanguageOrFallback(_ language: String?, for model: any TranscriptionModel) -> String {
-        let languages = languages(for: model)
+    static func validLanguageOrFallback(_ language: String?, for model: any TranscriptionModel, realtimeEnabled: Bool? = nil) -> String {
+        let languages = languages(for: model, realtimeEnabled: realtimeEnabled)
 
         if let language, languages[language] != nil {
             return language
         }
 
-        if model.provider == .nativeApple {
-            if languages["en-US"] != nil {
-                return "en-US"
-            }
-        }
-
         if languages["auto"] != nil {
             return "auto"
+        }
+
+        if languages["en-US"] != nil {
+            return "en-US"
         }
 
         if languages["en"] != nil {
@@ -57,16 +55,12 @@ enum TranscriptionLanguageSupport {
         return filtered
     }
 
-    private static func assemblyAIUsesRealtime(for model: any TranscriptionModel) -> Bool {
+    private static func assemblyAIUsesRealtime(for model: any TranscriptionModel, realtimeEnabled: Bool?) -> Bool {
         guard model.provider == .assemblyAI, model.supportsStreaming else {
             return false
         }
 
-        if let cloudProvider = CloudProviderRegistry.provider(for: model.provider), cloudProvider.isStreamingOnly {
-            return true
-        }
-
-        return UserDefaults.standard.object(forKey: "streaming-enabled-\(model.name)") as? Bool ?? true
+        return TranscriptionRealtimeSupport.isEnabled(for: model, modeValue: realtimeEnabled)
     }
 }
 
@@ -120,6 +114,48 @@ enum LanguageDictionary {
             return all
         }
     }
+
+    static let nemotronLatin: [String: String] = [
+        "auto": "Auto-detect",
+        "de-DE": "German",
+        "en-US": "English",
+        "es-US": "Spanish",
+        "fr-FR": "French",
+        "it-IT": "Italian",
+        "pt-BR": "Portuguese",
+    ]
+
+    static let nemotronMultilingual: [String: String] = [
+        "auto": "Auto-detect",
+        "ar-AR": "Arabic",
+        "bg-BG": "Bulgarian",
+        "cs-CZ": "Czech",
+        "da-DK": "Danish",
+        "de-DE": "German",
+        "en-US": "English",
+        "es-US": "Spanish",
+        "et-EE": "Estonian",
+        "fi-FI": "Finnish",
+        "fr-FR": "French",
+        "hi-IN": "Hindi",
+        "hr-HR": "Croatian",
+        "hu-HU": "Hungarian",
+        "it-IT": "Italian",
+        "ja-JP": "Japanese",
+        "ko-KR": "Korean",
+        "nb-NO": "Norwegian Bokmal",
+        "nl-NL": "Dutch",
+        "pl-PL": "Polish",
+        "pt-BR": "Portuguese",
+        "ro-RO": "Romanian",
+        "ru-RU": "Russian",
+        "sk-SK": "Slovak",
+        "sv-SE": "Swedish",
+        "tr-TR": "Turkish",
+        "uk-UA": "Ukrainian",
+        "vi-VN": "Vietnamese",
+        "zh-CN": "Mandarin Chinese",
+    ]
 
     private static func languages(matching codes: Set<String>) -> [String: String] {
         all.filter { codes.contains($0.key) }

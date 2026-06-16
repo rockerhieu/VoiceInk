@@ -12,11 +12,11 @@ enum TranscriptionStatus: String, Codable {
 final class Transcription {
     static let canceledTranscriptionText = "The transcription was canceled."
 
-    var id: UUID
-    var text: String
+    var id: UUID = UUID()
+    var text: String = ""
     var enhancedText: String?
-    var timestamp: Date
-    var duration: TimeInterval
+    var timestamp: Date = Date()
+    var duration: TimeInterval = 0
     var audioFileURL: String?
     var transcriptionModelName: String?
     var aiEnhancementModelName: String?
@@ -25,8 +25,10 @@ final class Transcription {
     var enhancementDuration: TimeInterval?
     var aiRequestSystemMessage: String?
     var aiRequestUserMessage: String?
-    var powerModeName: String?
-    var powerModeEmoji: String?
+    @Attribute(originalName: "powerModeName")
+    var modeName: String?
+    @Attribute(originalName: "powerModeEmoji")
+    var modeEmoji: String?
     var transcriptionStatus: String?
 
     init(text: String,
@@ -40,8 +42,8 @@ final class Transcription {
          enhancementDuration: TimeInterval? = nil,
          aiRequestSystemMessage: String? = nil,
          aiRequestUserMessage: String? = nil,
-         powerModeName: String? = nil,
-         powerModeEmoji: String? = nil,
+         modeName: String? = nil,
+         modeEmoji: String? = nil,
          transcriptionStatus: TranscriptionStatus = .pending) {
         self.id = UUID()
         self.text = text
@@ -56,8 +58,8 @@ final class Transcription {
         self.enhancementDuration = enhancementDuration
         self.aiRequestSystemMessage = aiRequestSystemMessage
         self.aiRequestUserMessage = aiRequestUserMessage
-        self.powerModeName = powerModeName
-        self.powerModeEmoji = powerModeEmoji
+        self.modeName = modeName
+        self.modeEmoji = modeEmoji
         self.transcriptionStatus = transcriptionStatus.rawValue
     }
 

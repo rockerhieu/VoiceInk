@@ -66,9 +66,9 @@ final class FluidAudioStreamingProvider: StreamingTranscriptionProvider {
     }
 
     func sendAudioChunk(_ data: Data) async throws {
-        let samples = Self.convertToFloat32(data)
+        let samples = PCMAudioConverter.float32Samples(fromPCM16Data: data)
         bufferLock.lock()
-        audioBuffer.append(contentsOf: samples)
+        audioBuffer.append(contentsOf: samples) 
         bufferLock.unlock()
     }
 
@@ -204,7 +204,7 @@ final class FluidAudioStreamingProvider: StreamingTranscriptionProvider {
             }
 
         } catch {
-            logger.error("Transcription pass failed: \(error.localizedDescription, privacy: .public)")
+            logger.error("Transcription pass failed: \(error, privacy: .public)")
             eventsContinuation?.yield(.error(error))
         }
     }
@@ -246,22 +246,9 @@ final class FluidAudioStreamingProvider: StreamingTranscriptionProvider {
             guard !text.isEmpty else { return nil }
             return TextNormalizer.shared.normalizeSentence(text)
         } catch {
-            logger.error("Final transcription failed: \(error.localizedDescription, privacy: .public)")
+            logger.error("Final transcription failed: \(error, privacy: .public)")
             return nil
         }
     }
 
-    // MARK: - Audio Conversion
-
-    private static func convertToFloat32(_ data: Data) -> [Float] {
-        let sampleCount = data.count / MemoryLayout<Int16>.size
-        var samples = [Float](repeating: 0, count: sampleCount)
-        data.withUnsafeBytes { rawPtr in
-            let int16Ptr = rawPtr.bindMemory(to: Int16.self)
-            for i in 0..<sampleCount {
-                samples[i] = Float(int16Ptr[i]) / 32767.0
-            }
-        }
-        return samples
-    }
 }

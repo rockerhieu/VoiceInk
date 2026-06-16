@@ -57,7 +57,7 @@ struct EditReplacementSheet: View {
         }
         .padding(.horizontal)
         .padding(.vertical, 12)
-        .background(CardBackground(isSelected: false))
+        .background(AppCardBackground(isSelected: false, cornerRadius: 16))
     }
 
     private var formContent: some View {
@@ -113,7 +113,7 @@ struct EditReplacementSheet: View {
                     .cornerRadius(6)
                     .overlay(
                         RoundedRectangle(cornerRadius: 6)
-                            .stroke(Color(.separatorColor), lineWidth: 1)
+                            .stroke(AppTheme.Border.control, lineWidth: 1)
                     )
             }
             .padding(.horizontal)
@@ -137,7 +137,7 @@ struct EditReplacementSheet: View {
         if let allReplacements = try? modelContext.fetch(descriptor) {
             for existingReplacement in allReplacements {
                 // Skip checking against itself
-                if existingReplacement.id == replacement.id {
+                if existingReplacement.persistentModelID == replacement.persistentModelID {
                     continue
                 }
 
@@ -148,7 +148,7 @@ struct EditReplacementSheet: View {
 
                 for tokenPair in newTokensPairs {
                     if existingTokens.contains(tokenPair.lowercased) {
-                        alertMessage = "'\(tokenPair.original)' already exists in word replacements"
+                        alertMessage = String(format: String(localized: "'%@' already exists in word replacements"), tokenPair.original)
                         showAlert = true
                         return
                     }
@@ -164,7 +164,7 @@ struct EditReplacementSheet: View {
             try modelContext.save()
             dismiss()
         } catch {
-            alertMessage = "Failed to save changes: \(error.localizedDescription)"
+            alertMessage = String(format: String(localized: "Failed to save changes: %@"), error.localizedDescription)
             showAlert = true
         }
     }

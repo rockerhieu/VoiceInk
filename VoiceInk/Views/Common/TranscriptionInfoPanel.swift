@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// Reusable component that displays transcription Details and AI Request sections.
-/// Used in both the inline history sliding panel and the separate history window's metadata view.
+/// Used in both the inline history side panel and the separate history window's metadata view.
 struct TranscriptionInfoPanel: View {
     let transcription: Transcription
 
@@ -12,6 +12,7 @@ struct TranscriptionInfoPanel: View {
         }
         .formStyle(.grouped)
         .scrollContentBackground(.hidden)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     // MARK: - Details Section
@@ -70,14 +71,11 @@ struct TranscriptionInfoPanel: View {
                 )
             }
 
-            if let powerModeValue = powerModeDisplay(
-                name: transcription.powerModeName,
-                emoji: transcription.powerModeEmoji
-            ) {
+            if let modeName = transcription.modeName {
                 metadataRow(
                     icon: "bolt.fill",
-                    label: "Power Mode",
-                    value: powerModeValue
+                    label: "Mode",
+                    value: modeName
                 )
             }
         } header: {
@@ -139,7 +137,7 @@ struct TranscriptionInfoPanel: View {
         return parts.joined(separator: "\n\n")
     }
 
-    private func metadataRow(icon: String, label: String, value: String) -> some View {
+    private func metadataRow(icon: String, label: LocalizedStringKey, value: String) -> some View {
         HStack(spacing: 8) {
             Image(systemName: icon)
                 .font(.system(size: 11, weight: .medium))
@@ -159,18 +157,4 @@ struct TranscriptionInfoPanel: View {
         }
     }
 
-    private func powerModeDisplay(name: String?, emoji: String?) -> String? {
-        guard name != nil || emoji != nil else { return nil }
-
-        switch (emoji?.trimmingCharacters(in: .whitespacesAndNewlines), name?.trimmingCharacters(in: .whitespacesAndNewlines)) {
-        case let (.some(emojiValue), .some(nameValue)) where !emojiValue.isEmpty && !nameValue.isEmpty:
-            return "\(emojiValue) \(nameValue)"
-        case let (.some(emojiValue), _) where !emojiValue.isEmpty:
-            return emojiValue
-        case let (_, .some(nameValue)) where !nameValue.isEmpty:
-            return nameValue
-        default:
-            return nil
-        }
-    }
 }

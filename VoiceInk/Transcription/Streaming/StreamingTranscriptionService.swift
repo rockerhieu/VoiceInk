@@ -114,7 +114,7 @@ class StreamingTranscriptionService {
     var isActive: Bool { state == .streaming || state == .committing }
 
     /// Start a streaming transcription session for the given model.
-    func startStreaming(model: any TranscriptionModel) async throws {
+    func startStreaming(model: any TranscriptionModel, context: TranscriptionRequestContext) async throws {
         let start = Date()
         state = .connecting
         committedSegments = []
@@ -125,7 +125,7 @@ class StreamingTranscriptionService {
         let provider = createProvider(for: model)
         self.provider = provider
 
-        let selectedLanguage = UserDefaults.standard.string(forKey: "SelectedLanguage") ?? "auto"
+        let selectedLanguage = context.language ?? "auto"
         logger.notice("Streaming start requested model=\(model.displayName, privacy: .public) language=\(selectedLanguage, privacy: .public)")
 
         try await provider.connect(model: model, language: selectedLanguage)
@@ -174,7 +174,7 @@ class StreamingTranscriptionService {
         } catch {
             commitSignal?.finish()
             commitSignal = nil
-            logger.error("Failed to send commit: \(error.localizedDescription, privacy: .public)")
+            logger.error("Failed to send commit: \(error, privacy: .public)")
             state = .failed
             await cleanupStreaming()
             throw error
@@ -221,6 +221,14 @@ class StreamingTranscriptionService {
 
     private func createProvider(for model: any TranscriptionModel) -> StreamingTranscriptionProvider {
         if model.provider == .fluidAudio {
+            if FluidAudioModelManager.isNemotronModel(named: model.name) {
+                return FluidAudioNemotronStreamingProvider()
+            }
+
+            if FluidAudioModelManager.isParakeetUnifiedModel(named: model.name) {
+                return FluidAudioUnifiedStreamingProvider()
+            }
+
             guard let fluidAudioService else {
                 fatalError("FluidAudioTranscriptionService required for FluidAudio streaming. Ensure it is passed to StreamingTranscriptionService.")
             }
@@ -228,7 +236,7 @@ class StreamingTranscriptionService {
         }
         guard let cloudProvider = CloudProviderRegistry.provider(for: model.provider),
               let streamingProvider = cloudProvider.makeStreamingProvider(modelContext: modelContext) else {
-            fatalError("Unsupported streaming provider: \(model.provider). Check supportsStreaming() before calling startStreaming().")
+            fatalError("Unsupported streaming provider: \(model.provider). Check shouldUseRealtimeTranscription() before calling startStreaming().")
         }
         return streamingProvider
     }
@@ -317,7 +325,7 @@ class StreamingTranscriptionService {
                     break
                 case .error(let error):
                     await MainActor.run {
-                        self.logger.error("Streaming event error: \(error.localizedDescription, privacy: .public)")
+                        self.logger.error("Streaming event error: \(error, privacy: .public)")
                     }
                 }
             }  

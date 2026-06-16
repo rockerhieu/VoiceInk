@@ -14,7 +14,7 @@ class WhisperTranscriptionService: TranscriptionService {
         self.modelProvider = modelProvider
     }
 
-    func transcribe(audioURL: URL, model: any TranscriptionModel) async throws -> String {
+    func transcribe(audioURL: URL, model: any TranscriptionModel, context: TranscriptionRequestContext) async throws -> String {
         guard model.provider == .whisper else {
             throw VoiceInkEngineError.modelLoadFailed
         }
@@ -41,7 +41,7 @@ class WhisperTranscriptionService: TranscriptionService {
             do {
                 whisperContext = try await WhisperContext.createContext(path: modelURL.path)
             } catch {
-                logger.error("❌ Failed to load model: \(model.name, privacy: .public) - \(error.localizedDescription, privacy: .public)")
+                logger.error("❌ Failed to load model: \(model.name, privacy: .public) - \(error, privacy: .public)")
                 throw VoiceInkEngineError.modelLoadFailed
             }
         }
@@ -55,8 +55,8 @@ class WhisperTranscriptionService: TranscriptionService {
         let data = try readAudioSamples(audioURL)
 
         // Set prompt
-        let currentPrompt = UserDefaults.standard.string(forKey: "TranscriptionPrompt") ?? ""
-        await whisperContext.setPrompt(currentPrompt)
+        await whisperContext.setLanguage(context.language)
+        await whisperContext.setPrompt(context.prompt ?? "")
 
         // Transcribe
         let success = await whisperContext.fullTranscribe(samples: data)

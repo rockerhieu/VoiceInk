@@ -9,6 +9,7 @@ class Recorder: NSObject, ObservableObject {
     private let logger = Logger(subsystem: "com.prakashjoshipax.voiceink", category: "Recorder")
     private let deviceManager = AudioDeviceManager.shared
     private var deviceSwitchObserver: NSObjectProtocol?
+    private var audioDeviceChangedObserver: NSObjectProtocol?
     private var isReconfiguring = false
     private let mediaController = MediaController.shared
     private let playbackController = PlaybackController.shared
@@ -36,6 +37,8 @@ class Recorder: NSObject, ObservableObject {
     override init() {
         super.init()
         setupDeviceSwitchObserver()
+        setupAudioDeviceChangedObserver()
+        schedulePrepareForCurrentDevice(reason: "init")
     }
 
     private func setupDeviceSwitchObserver() {
@@ -46,6 +49,19 @@ class Recorder: NSObject, ObservableObject {
         ) { [weak self] notification in
             Task {
                 await self?.handleDeviceSwitchRequired(notification)
+            }
+        }
+    }
+
+    private func setupAudioDeviceChangedObserver() {
+        audioDeviceChangedObserver = NotificationCenter.default.addObserver(
+            forName: Notification.Name("AudioDeviceChanged"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, !self.deviceManager.isRecordingActive else { return }
+                self.schedulePrepareForCurrentDevice(reason: "device-changed")
             }
         }
     }
@@ -81,7 +97,7 @@ class Recorder: NSObject, ObservableObject {
             if let deviceName = deviceManager.availableDevices.first(where: { $0.id == newDeviceID })?.name {
                 await MainActor.run {
                     NotificationManager.shared.showNotification(
-                        title: "Switched to: \(deviceName)",
+                        title: String(format: String(localized: "Switched to: %@"), deviceName),
                         type: .info
                     )
                 }
@@ -89,7 +105,7 @@ class Recorder: NSObject, ObservableObject {
 
             logger.notice("🎙️ Successfully switched recording to device \(newDeviceID, privacy: .public)")
         } catch {
-            logger.error("❌ Failed to switch device: \(error.localizedDescription, privacy: .public)")
+            logger.error("❌ Failed to switch device: \(error, privacy: .public)")
 
             // If switch fails, stop recording and notify user
             await handleRecordingError(error)
@@ -106,14 +122,16 @@ class Recorder: NSObject, ObservableObject {
     }
 
     func startRecording(toOutputFile url: URL) async throws {
-        logger.notice("startRecording called – deviceID=\(self.deviceManager.getCurrentDevice(), privacy: .public), file=\(url.lastPathComponent, privacy: .public)")
         deviceManager.isRecordingActive = true
 
         let currentDeviceID = deviceManager.getCurrentDevice()
         let lastDeviceID = UserDefaults.standard.string(forKey: "lastUsedMicrophoneDeviceID")
         if String(currentDeviceID) != lastDeviceID {
             if let deviceName = deviceManager.availableDevices.first(where: { $0.id == currentDeviceID })?.name {
-                NotificationManager.shared.showNotification(title: "Using: \(deviceName)", type: .info)
+                NotificationManager.shared.showNotification(
+                    title: String(format: String(localized: "Using: %@"), deviceName),
+                    type: .info
+                )
             }
         }
         UserDefaults.standard.set(String(currentDeviceID), forKey: "lastUsedMicrophoneDeviceID")
@@ -124,12 +142,12 @@ class Recorder: NSObject, ObservableObject {
         audioRestorationTask = nil
         audioMeterUpdateTimer?.cancel()
 
-        let coreAudioRecorder = CoreAudioRecorder()
+        let coreAudioRecorder = recorder ?? CoreAudioRecorder()
         coreAudioRecorder.onAudioChunk = onAudioChunk
         recorder = coreAudioRecorder
 
         do {
-            // Offload initialization to avoid shortcut lag.
+            // Offload hardware start to avoid shortcut lag.
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
                 audioSetupQueue.async {
                     do {
@@ -140,7 +158,6 @@ class Recorder: NSObject, ObservableObject {
                     }
                 }
             }
-            logger.notice("startRecording: CoreAudioRecorder started successfully")
 
             startAudioMeterTimer()
             Task { [weak self] in
@@ -148,22 +165,20 @@ class Recorder: NSObject, ObservableObject {
                 await self.playbackController.pauseMedia()
             }
         } catch {
-            logger.error("Failed to start recording: \(error.localizedDescription, privacy: .public)")
+            logger.error("Failed to start recording deviceID=\(deviceID, privacy: .public) file=\(url.lastPathComponent, privacy: .public) error=\(error, privacy: .public)")
             await stopRecording()
             throw RecorderError.couldNotStartRecording
         }
     }
 
     func stopRecording() async {
-        logger.notice("stopRecording called")
         audioMuteTask?.cancel()
         audioMuteTask = nil
         audioMeterUpdateTimer?.cancel()
         audioMeterUpdateTimer = nil
 
-        // Capture current recorder to stop it on the serial hardware queue
+        // Capture current recorder to stop it on the serial hardware queue.
         let currentRecorder = self.recorder
-        recorder = nil
         onAudioChunk = nil
 
         await withCheckedContinuation { continuation in
@@ -188,7 +203,7 @@ class Recorder: NSObject, ObservableObject {
     }
 
     private func handleRecordingError(_ error: Error) async {
-        logger.error("❌ Recording error occurred: \(error.localizedDescription, privacy: .public)")
+        logger.error("❌ Recording error occurred: \(error, privacy: .public)")
 
         // Stop the recording
         await stopRecording()
@@ -196,7 +211,7 @@ class Recorder: NSObject, ObservableObject {
         // Notify the user about the recording failure
         await MainActor.run {
             NotificationManager.shared.showNotification(
-                title: "Recording Failed: \(error.localizedDescription)",
+                title: String(format: String(localized: "Recording Failed: %@"), error.localizedDescription),
                 type: .error
             )
         }
@@ -210,6 +225,30 @@ class Recorder: NSObject, ObservableObject {
         }
         timer.resume()
         audioMeterUpdateTimer = timer
+    }
+
+    private func schedulePrepareForCurrentDevice(reason: String) {
+        guard AVCaptureDevice.authorizationStatus(for: .audio) == .authorized else {
+            return
+        }
+
+        let deviceID = deviceManager.getCurrentDevice()
+        guard deviceID != 0 else {
+            recorder?.teardown()
+            return
+        }
+
+        let coreAudioRecorder = recorder ?? CoreAudioRecorder()
+        coreAudioRecorder.onAudioChunk = onAudioChunk
+        recorder = coreAudioRecorder
+
+        audioSetupQueue.async { [logger] in
+            do {
+                try coreAudioRecorder.prepare(deviceID: deviceID)
+            } catch {
+                logger.warning("Recorder prepare failed reason=\(reason, privacy: .public) deviceID=\(deviceID, privacy: .public) error=\(error, privacy: .public)")
+            }
+        }
     }
 
     private func updateAudioMeter() {
@@ -263,6 +302,10 @@ class Recorder: NSObject, ObservableObject {
         if let observer = deviceSwitchObserver {
             NotificationCenter.default.removeObserver(observer)
         }
+        if let observer = audioDeviceChangedObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        recorder?.teardown()
     }
 }
 

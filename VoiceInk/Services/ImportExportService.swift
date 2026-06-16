@@ -122,15 +122,13 @@ class ImportExportService {
     }
 
     @MainActor
-    func exportSettings(enhancementService: AIEnhancementService, recordingShortcutManager: RecordingShortcutManager, menuBarManager: MenuBarManager, mediaController: MediaController, playbackController: PlaybackController, soundManager: SoundManager, recorderUIManager: RecorderUIManager, modelContext: ModelContext) {
-        let powerModeManager = PowerModeManager.shared
+    func exportSettings(enhancementService: AIEnhancementService, recordingShortcutManager: RecordingShortcutManager, menuBarManager: MenuBarManager, mediaController: MediaController, playbackController: PlaybackController, recorderUIManager: RecorderUIManager, modelContext: ModelContext) {
+        let modeManager = ModeManager.shared
         let emojiManager = EmojiManager.shared
 
-        let exportablePrompts = enhancementService.customPrompts.filter { !$0.isPredefined }
-
-        let powerConfigs = powerModeManager.configurations
-        let powerModeShortcuts = Dictionary(uniqueKeysWithValues: powerConfigs.compactMap { config -> (String, ShortcutBackup)? in
-            guard let shortcut = ShortcutStore.shortcut(for: .powerMode(config.id)) else { return nil }
+        let modeConfigs = modeManager.configurations
+        let modeShortcuts = Dictionary(uniqueKeysWithValues: modeConfigs.compactMap { config -> (String, ShortcutBackup)? in
+            guard let shortcut = ShortcutStore.shortcut(for: .mode(config.id)) else { return nil }
             return (config.id.uuidString, ShortcutBackup(shortcut))
         })
 
@@ -161,7 +159,6 @@ class ImportExportService {
             cancelRecorderShortcut: ShortcutStore.shortcut(for: .cancelRecorder).map(ShortcutBackup.init),
             openHistoryWindowShortcut: ShortcutStore.shortcut(for: .openHistoryWindow).map(ShortcutBackup.init),
             quickAddToDictionaryShortcut: ShortcutStore.shortcut(for: .quickAddToDictionary).map(ShortcutBackup.init),
-            toggleEnhancementShortcut: ShortcutStore.shortcut(for: .toggleEnhancement).map(ShortcutBackup.init),
             primaryRecordingShortcutRawValue: recordingShortcutManager.primaryRecordingShortcut.rawValue,
             secondaryRecordingShortcutRawValue: recordingShortcutManager.secondaryRecordingShortcut.rawValue,
             primaryRecordingShortcutModeRawValue: recordingShortcutManager.primaryRecordingShortcutMode.rawValue,
@@ -170,13 +167,12 @@ class ImportExportService {
             middleClickActivationDelay: recordingShortcutManager.middleClickActivationDelay,
             launchAtLoginEnabled: LaunchAtLogin.isEnabled,
             isMenuBarOnly: menuBarManager.isMenuBarOnly,
-            recorderType: recorderUIManager.recorderType,
+            recorderType: recorderUIManager.recorderPanelStyle.rawValue,
             isTranscriptionCleanupEnabled: UserDefaults.standard.bool(forKey: keyIsTranscriptionCleanupEnabled),
             transcriptionRetentionMinutes: UserDefaults.standard.integer(forKey: keyTranscriptionRetentionMinutes),
             isAudioCleanupEnabled: UserDefaults.standard.bool(forKey: keyIsAudioCleanupEnabled),
             audioRetentionPeriod: UserDefaults.standard.integer(forKey: keyAudioRetentionPeriod),
 
-            isSoundFeedbackEnabled: soundManager.isEnabled,
             isSystemMuteEnabled: mediaController.isSystemMuteEnabled,
             isPauseMediaEnabled: playbackController.isPauseMediaEnabled,
             audioResumptionDelay: mediaController.audioResumptionDelay,
@@ -191,9 +187,9 @@ class ImportExportService {
 
         let exportedSettings = BackupFile(
             version: currentSettingsVersion,
-            customPrompts: exportablePrompts,
-            powerModeConfigs: powerConfigs,
-            powerModeShortcuts: powerModeShortcuts.isEmpty ? nil : powerModeShortcuts,
+            customPrompts: enhancementService.customPrompts,
+            modeConfigs: modeConfigs,
+            modeShortcuts: modeShortcuts.isEmpty ? nil : modeShortcuts,
             vocabularyWords: exportedDictionaryItems,
             wordReplacements: exportedWordReplacements,
             generalSettings: generalSettingsToExport,
@@ -210,45 +206,45 @@ class ImportExportService {
             let savePanel = NSSavePanel()
             savePanel.allowedContentTypes = [UTType.json]
             savePanel.nameFieldStringValue = "VoiceInk_Settings_Backup.json"
-            savePanel.title = "Export VoiceInk Settings"
-            savePanel.message = "Choose a location to save your settings."
+            savePanel.title = String(localized: "Export VoiceInk Settings")
+            savePanel.message = String(localized: "Choose a location to save your settings.")
 
             DispatchQueue.main.async {
                 if savePanel.runModal() == .OK {
                     if let url = savePanel.url {
                         do {
                             try jsonData.write(to: url)
-                            self.showAlert(title: "Export Successful", message: "Your settings have been successfully exported to \(url.lastPathComponent).")
+                            self.showAlert(title: String(localized: "Export Successful"), message: String(format: String(localized: "Your settings have been successfully exported to %@."), url.lastPathComponent))
                         } catch {
-                            self.showAlert(title: "Export Error", message: "Could not save settings to file: \(error.localizedDescription)")
+                            self.showAlert(title: String(localized: "Export Error"), message: String(format: String(localized: "Could not save settings to file: %@"), error.localizedDescription))
                         }
                     }
                 } else {
-                    self.showAlert(title: "Export Canceled", message: "The settings export operation was canceled.")
+                    self.showAlert(title: String(localized: "Export Canceled"), message: String(localized: "The settings export operation was canceled."))
                 }
             }
         } catch {
-            self.showAlert(title: "Export Error", message: "Could not encode settings to JSON: \(error.localizedDescription)")
+            self.showAlert(title: String(localized: "Export Error"), message: String(format: String(localized: "Could not encode settings to JSON: %@"), error.localizedDescription))
         }
     }
 
     @MainActor
-    func importSettings(enhancementService: AIEnhancementService, recordingShortcutManager: RecordingShortcutManager, menuBarManager: MenuBarManager, mediaController: MediaController, playbackController: PlaybackController, soundManager: SoundManager, recorderUIManager: RecorderUIManager, modelContext: ModelContext, transcriptionModelManager: TranscriptionModelManager) {
+    func importSettings(enhancementService: AIEnhancementService, recordingShortcutManager: RecordingShortcutManager, menuBarManager: MenuBarManager, mediaController: MediaController, playbackController: PlaybackController, recorderUIManager: RecorderUIManager, modelContext: ModelContext, transcriptionModelManager: TranscriptionModelManager) {
         let openPanel = NSOpenPanel()
         openPanel.allowedContentTypes = [UTType.json]
         openPanel.canChooseFiles = true
         openPanel.canChooseDirectories = false
         openPanel.allowsMultipleSelection = false
-        openPanel.title = "Import VoiceInk Settings"
-        openPanel.message = "Choose a settings backup, then select what you want to import."
+        openPanel.title = String(localized: "Import VoiceInk Settings")
+        openPanel.message = String(localized: "Choose a settings backup, then select what you want to import.")
 
         guard openPanel.runModal() == .OK else {
-            showAlert(title: "Import Canceled", message: "The settings import operation was canceled.")
+            showAlert(title: String(localized: "Import Canceled"), message: String(localized: "The settings import operation was canceled."))
             return
         }
 
         guard let url = openPanel.url else {
-            showAlert(title: "Import Error", message: "Could not get the file URL from the open panel.")
+            showAlert(title: String(localized: "Import Error"), message: String(localized: "Could not get the file URL from the open panel."))
             return
         }
 
@@ -258,16 +254,16 @@ class ImportExportService {
             let backup = try decoder.decode(BackupFile.self, from: jsonData)
 
             if backup.version != currentSettingsVersion {
-                showAlert(title: "Version Mismatch", message: "The imported settings file (version \(backup.version)) is from a different version than your application (version \(currentSettingsVersion)). Proceeding with import, but be aware of potential incompatibilities.")
+                showAlert(title: String(localized: "Version Mismatch"), message: String(format: String(localized: "The imported settings file (version %@) is from a different version than your application (version %@). Proceeding with import, but be aware of potential incompatibilities."), backup.version, currentSettingsVersion))
             }
 
             guard let selectedCategories = presentImportSelectionDialog() else {
-                showAlert(title: "Import Canceled", message: "No settings were imported.")
+                showAlert(title: String(localized: "Import Canceled"), message: String(localized: "No settings were imported."))
                 return
             }
 
             guard !selectedCategories.isEmpty else {
-                showAlert(title: "Import Error", message: "Select at least one category to import.")
+                showAlert(title: String(localized: "Import Error"), message: String(localized: "Select at least one category to import."))
                 return
             }
 
@@ -279,29 +275,28 @@ class ImportExportService {
                 menuBarManager: menuBarManager,
                 mediaController: mediaController,
                 playbackController: playbackController,
-                soundManager: soundManager,
                 recorderUIManager: recorderUIManager,
                 modelContext: modelContext,
                 transcriptionModelManager: transcriptionModelManager
             )
 
             showImportSuccessAlert(
-                message: "Settings imported successfully from \(url.lastPathComponent).\n\nImported: \(categorySummary(for: selectedCategories)).",
+                message: String(format: String(localized: "Settings imported successfully from %@.\n\nImported: %@."), url.lastPathComponent, categorySummary(for: selectedCategories)),
                 needsAPIKeyReminder: needsAPIKeyReminder(for: selectedCategories)
             )
         } catch {
-            showAlert(title: "Import Error", message: "Error importing settings: \(error.localizedDescription). The file might be corrupted or not in the correct format.")
+            showAlert(title: String(localized: "Import Error"), message: String(format: String(localized: "Error importing settings: %@. The file might be corrupted or not in the correct format."), error.localizedDescription))
         }
     }
 
     private func presentImportSelectionDialog() -> Set<BackupCategory>? {
         let accessory = BackupOptions()
         let alert = NSAlert()
-        alert.messageText = "Import Settings"
-        alert.informativeText = "Choose what to import from this backup."
+        alert.messageText = String(localized: "Import Settings")
+        alert.informativeText = String(localized: "Choose what to import from this backup.")
         alert.alertStyle = .informational
         alert.accessoryView = accessory.view
-        alert.addButton(withTitle: "Import")
+        alert.addButton(withTitle: String(localized: "Import"))
         alert.addButton(withTitle: "Cancel")
 
         let response = alert.runModal()
@@ -314,7 +309,7 @@ class ImportExportService {
 
     private func categorySummary(for categories: Set<BackupCategory>) -> String {
         if categories == Set(BackupCategory.allCases) {
-            return "All settings"
+            return String(localized: "All settings")
         }
 
         return BackupCategory.allCases
@@ -324,7 +319,7 @@ class ImportExportService {
     }
 
     private func needsAPIKeyReminder(for categories: Set<BackupCategory>) -> Bool {
-        !categories.isDisjoint(with: [.prompts, .powerMode, .customModels])
+        !categories.isDisjoint(with: [.prompts, .modes, .customModels])
     }
 
     private func showAlert(title: String, message: String) {
@@ -333,7 +328,7 @@ class ImportExportService {
             alert.messageText = title
             alert.informativeText = message
             alert.alertStyle = .informational
-            alert.addButton(withTitle: "OK")
+            alert.addButton(withTitle: String(localized: "OK"))
             alert.runModal()
         }
     }
@@ -341,17 +336,17 @@ class ImportExportService {
     private func showImportSuccessAlert(message: String, needsAPIKeyReminder: Bool) {
         DispatchQueue.main.async {
             let alert = NSAlert()
-            alert.messageText = "Import Successful"
+            alert.messageText = String(localized: "Import Successful")
             var informativeText = message
             if needsAPIKeyReminder {
-                informativeText += "\n\nIMPORTANT: If you were using AI enhancement features, please make sure to reconfigure your API keys in the Enhancement section."
+                informativeText += "\n\n" + String(localized: "IMPORTANT: If you were using AI enhancement features, please make sure to reconfigure your API keys in the AI Models section.")
             }
-            informativeText += "\n\nIt is recommended to restart VoiceInk for all changes to take full effect."
+            informativeText += "\n\n" + String(localized: "It is recommended to restart VoiceInk for all changes to take full effect.")
             alert.informativeText = informativeText
             alert.alertStyle = .informational
-            alert.addButton(withTitle: "OK")
+            alert.addButton(withTitle: String(localized: "OK"))
             if needsAPIKeyReminder {
-                alert.addButton(withTitle: "Configure API Keys")
+                alert.addButton(withTitle: String(localized: "Configure API Keys"))
             }
             
             let response = alert.runModal()
@@ -359,7 +354,7 @@ class ImportExportService {
                 NotificationCenter.default.post(
                     name: .navigateToDestination,
                     object: nil,
-                    userInfo: ["destination": "Enhancement"]
+                    userInfo: ["destination": "AI Models"]
                 )
             }
         }

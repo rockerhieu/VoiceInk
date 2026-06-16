@@ -1,11 +1,12 @@
 import SwiftUI
 
 struct TrialMessageView: View {
-    let message: String
+    let message: Text
     let type: MessageType
     var onAddLicenseKey: (() -> Void)? = nil
     
     enum MessageType {
+        case licenseRequired
         case warning
         case expired
         case info
@@ -20,7 +21,7 @@ struct TrialMessageView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
                     .font(.headline)
-                Text(message)
+                message
                     .font(.subheadline)
                     .foregroundColor(.secondary)
             }
@@ -48,12 +49,12 @@ struct TrialMessageView: View {
             }
         }
         .padding()
-        .background(backgroundColor)
-        .cornerRadius(12)
+        .background(AppCardBackground(cornerRadius: 16))
     }
     
     private var icon: String {
         switch type {
+        case .licenseRequired: return "checkmark.seal.fill"
         case .warning: return "exclamationmark.triangle.fill"
         case .expired: return "xmark.circle.fill"
         case .info: return "info.circle.fill"
@@ -61,26 +62,16 @@ struct TrialMessageView: View {
     }
     
     private var iconColor: Color {
-        switch type {
-        case .warning: return .orange
-        case .expired: return .red
-        case .info: return .blue
-        }
+        AppTheme.Text.secondary
     }
     
-    private var title: String {
+    private var title: LocalizedStringKey {
         switch type {
+        case .licenseRequired: return "License Required"
         case .warning: return "Trial Ending Soon"
         case .expired: return "Trial Expired"
         case .info: return "Trial Active"
         }
     }
     
-    private var backgroundColor: Color {
-        switch type {
-        case .warning: return Color.orange.opacity(0.1)
-        case .expired: return Color.red.opacity(0.1)
-        case .info: return Color.blue.opacity(0.1)
-        }
-    }
-} 
+}

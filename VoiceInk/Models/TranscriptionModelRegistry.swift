@@ -40,6 +40,39 @@ enum TranscriptionModelRegistry {
                 supportsStreaming: true,
                 supportedLanguages: LanguageDictionary.forProvider(isMultilingual: true, provider: .fluidAudio)
             ),
+            FluidAudioModel(
+                name: "parakeet-unified-0.6b",
+                displayName: "Parakeet Unified",
+                description: "English-only Parakeet model with native realtime transcription support",
+                size: "1.2 GB",
+                speed: 0.99,
+                accuracy: 0.95,
+                ramUsage: 1.0,
+                supportsStreaming: true,
+                supportedLanguages: LanguageDictionary.forProvider(isMultilingual: false, provider: .fluidAudio)
+            ),
+            FluidAudioModel(
+                name: "nemotron-latin-0.6b",
+                displayName: "Nemotron Latin",
+                description: "NVIDIA's Nemotron streaming model with Latin language support",
+                size: "620 MB",
+                speed: 0.99,
+                accuracy: 0.92,
+                ramUsage: 1.2,
+                supportsStreaming: true,
+                supportedLanguages: LanguageDictionary.nemotronLatin
+            ),
+            FluidAudioModel(
+                name: "nemotron-multilingual-0.6b",
+                displayName: "Nemotron Multilingual",
+                description: "NVIDIA's Nemotron streaming model with multilingual support",
+                size: "672 MB",
+                speed: 0.99,
+                accuracy: 0.90,
+                ramUsage: 1.5,
+                supportsStreaming: true,
+                supportedLanguages: LanguageDictionary.nemotronMultilingual
+            ),
 
             // Local Models
             WhisperModel(
@@ -89,7 +122,7 @@ enum TranscriptionModelRegistry {
                 supportedLanguages: LanguageDictionary.forProvider(isMultilingual: true, provider: .whisper),
                 description: "Large model v2, slower than Medium but more accurate",
                 speed: 0.3,
-                accuracy: 0.96,
+                accuracy: 0.95,
                 ramUsage: 3.8
             ),
             WhisperModel(
@@ -99,7 +132,7 @@ enum TranscriptionModelRegistry {
                 supportedLanguages: LanguageDictionary.forProvider(isMultilingual: true, provider: .whisper),
                 description: "Large model v3, very slow but most accurate",
                 speed: 0.3,
-                accuracy: 0.98,
+                accuracy: 0.95,
                 ramUsage: 3.9
             ),
             WhisperModel(
@@ -109,7 +142,7 @@ enum TranscriptionModelRegistry {
                 supportedLanguages: LanguageDictionary.forProvider(isMultilingual: true, provider: .whisper),
                 description: "Large model v3 Turbo, faster than v3 with similar accuracy",
                 speed: 0.75,
-                accuracy: 0.97,
+                accuracy: 0.94,
                 ramUsage: 1.8
             ),
             WhisperModel(
@@ -119,7 +152,7 @@ enum TranscriptionModelRegistry {
                 supportedLanguages: LanguageDictionary.forProvider(isMultilingual: true, provider: .whisper),
                 description: "Quantized version of Large v3 Turbo, faster with slightly lower accuracy",
                 speed: 0.75,
-                accuracy: 0.95,
+                accuracy: 0.94,
                 ramUsage: 1.0
             )
         ]

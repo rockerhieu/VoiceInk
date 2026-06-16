@@ -16,9 +16,21 @@ class CustomCloudModelManager: ObservableObject {
     
     // MARK: - CRUD Operations
     
-    func addCustomModel(_ model: CustomCloudModel) {
+    private func addCustomModel(_ model: CustomCloudModel) {
         customModels.append(model)
         saveCustomModels()
+    }
+
+    @discardableResult
+    func addCustomModel(_ model: CustomCloudModel, apiKey: String) -> Bool {
+        let trimmedKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedKey.isEmpty,
+              APIKeyManager.shared.saveCustomModelAPIKey(trimmedKey, forModelId: model.id) else {
+            return false
+        }
+
+        addCustomModel(model)
+        return true
     }
 
     func removeCustomModel(withId id: UUID) {
@@ -44,7 +56,7 @@ class CustomCloudModelManager: ObservableObject {
         do {
             customModels = try JSONDecoder().decode([CustomCloudModel].self, from: data)
         } catch {
-            logger.error("Failed to decode custom models: \(error.localizedDescription, privacy: .public)")
+            logger.error("Failed to decode custom models: \(error, privacy: .public)")
             customModels = []
         }
     }
@@ -54,75 +66,37 @@ class CustomCloudModelManager: ObservableObject {
             let data = try JSONEncoder().encode(customModels)
             userDefaults.set(data, forKey: customModelsKey)
         } catch {
-            logger.error("Failed to encode custom models: \(error.localizedDescription, privacy: .public)")
+            logger.error("Failed to encode custom models: \(error, privacy: .public)")
         }
     }
     
     // MARK: - Validation
-    
-    func validateModel(name: String, displayName: String, apiEndpoint: String, apiKey: String, modelName: String) -> [String] {
+
+    func validateModelDetails(name: String, displayName: String, apiEndpoint: String, modelName: String, excludingId: UUID? = nil) -> [String] {
         var errors: [String] = []
-        
+
         if name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            errors.append("Name cannot be empty")
+            errors.append(String(localized: "Name cannot be empty"))
         }
-        
+
         if displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            errors.append("Display name cannot be empty")
+            errors.append(String(localized: "Display name cannot be empty"))
         }
-        
+
         if apiEndpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            errors.append("API endpoint cannot be empty")
+            errors.append(String(localized: "API endpoint cannot be empty"))
         } else if !isValidURL(apiEndpoint) {
-            errors.append("API endpoint must be a valid URL")
+            errors.append(String(localized: "API endpoint must be a valid URL"))
         }
-        
-        if apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            errors.append("API key cannot be empty")
-        }
-        
+
         if modelName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            errors.append("Model name cannot be empty")
+            errors.append(String(localized: "Model name cannot be empty"))
         }
-        
-        // Check for duplicate names
-        if customModels.contains(where: { $0.name == name }) {
-            errors.append("A model with this name already exists")
-        }
-        
-        return errors
-    }
-    
-    func validateModel(name: String, displayName: String, apiEndpoint: String, apiKey: String, modelName: String, excludingId: UUID? = nil) -> [String] {
-        var errors: [String] = []
-        
-        if name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            errors.append("Name cannot be empty")
-        }
-        
-        if displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            errors.append("Display name cannot be empty")
-        }
-        
-        if apiEndpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            errors.append("API endpoint cannot be empty")
-        } else if !isValidURL(apiEndpoint) {
-            errors.append("API endpoint must be a valid URL")
-        }
-        
-        if apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            errors.append("API key cannot be empty")
-        }
-        
-        if modelName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            errors.append("Model name cannot be empty")
-        }
-        
-        // Check for duplicate names, excluding the specified ID
+
         if customModels.contains(where: { $0.name == name && $0.id != excludingId }) {
-            errors.append("A model with this name already exists")
+            errors.append(String(localized: "A model with this name already exists"))
         }
-        
+
         return errors
     }
     

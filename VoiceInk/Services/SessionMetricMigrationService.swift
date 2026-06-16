@@ -62,7 +62,7 @@ final class SessionMetricMigrationService {
                         transcriptionModelName: transcription.transcriptionModelName,
                         transcriptionDuration: transcriptionDuration,
                         speedFactor: speedFactor,
-                        powerModeName: transcription.powerModeName,
+                        modeName: transcription.modeName,
                         aiEnhancementModelName: transcription.aiEnhancementModelName,
                         enhancementDuration: enhancementDuration
                     )
@@ -77,7 +77,7 @@ final class SessionMetricMigrationService {
                 UserDefaults.standard.set(true, forKey: completionKey)
                 logger.notice("Completed stats migration with \(insertedCount, privacy: .public) session metric(s)")
             } catch {
-                logger.error("Stats migration failed: \(error.localizedDescription, privacy: .public)")
+                logger.error("Stats migration failed: \(error, privacy: .public)")
             }
 
             await MainActor.run {
